@@ -1,0 +1,156 @@
+---
+title: "Machine Learning Final Assignment"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Executive Summary
+
+This paper illustrates my process and reasoning for building a prediction model to best estimate the 'classe' variable from the data available. The 'classe' variable contains five classifications for how well a certain activity was performed by the individual. 
+
+The goal is to best predict the category of the classe variable based on information collected and provided to us. The best prediction model based on run time, error rate, and accuracy is the Randon Forest (rf) for this multi-level classification problem. 
+
+## About the Data
+```{r import, echo=FALSE, results='hide',message=FALSE}
+#Step 0: Load the packages
+library(caret); library(dplyr);library(ggplot2);library(rpart);library(randomForest)
+
+#Step 1: Import in the Data
+training=read.csv("~/R/Machine_Learning/pml-training.csv")
+testing=read.csv("~/R/Machine_Learning/pml-testing.csv")
+```
+
+```{r summary}
+dim(training) #Dimensions of the training dataframe
+```
+
+We have been provided a training data set with 19,622 observations, and 159 columns that may be used as predictors, in addition to the classe variable which is the outcome we wish to predict with our model.
+
+We have decided to break up the training data into a training and validation set, to help us estimate out of sample error, and to fine-tune the model selected. Additionally, we will eliminate those predictors that have no (or limited) predictive value.
+
+## Pre-Processing the Data
+
+All processing of data and building of model should happen on the training data, not on the validation data, hence we split the 'training.csv' data. 75% of random observations (using the createDataPartition function) will be used for training the model, while 25% will be for validation purposes. 
+
+```{r validation, echo=FALSE, results='hide',message=FALSE}
+#To estimate out of sample, Split training into training and validation (75/25)
+set.seed(523)
+inTraining<-createDataPartition(y=training$classe,p=.75,list=FALSE)
+newTraining<-training[inTraining,]
+validation<-training[-inTraining,]
+dim(training);dim(newTraining);dim(validation)
+```
+
+After splitting the data into training (14,718 observations) and validation (4,904 observations), the next step is to identify and remove predictors that don't add value.
+
+First, we remove all columns which have missing (or NA) values for more than 95% of its observations.
+
+```{r RemoveNAs, echo=FALSE, results='hide',message=FALSE}
+#Removing columns with unusually high number of NAs
+NAPercent<-colMeans(is.na(newTraining)) 
+removingNAs<-newTraining[,which(NAPercent<0.95)] ##Set threshold at 95% 
+```
+
+Second, using the nearZeroVar function, we remove those columns where variance of the data is near zero (function default is 95/5).
+
+```{r nzv, echo=FALSE, results='hide',message=FALSE}
+#Near zero variance
+nsv<-nearZeroVar(removingNAs,saveMetrics = TRUE)
+train1<-subset(removingNAs,select=c(colnames(removingNAs[nsv$nzv==FALSE])))
+dim(train1);dim(newTraining)
+```
+
+Finally, we remove the first column (X) since 100% of its values are unique, which make it unhelpful for prediction.
+```{r removeX, echo=FALSE, results='hide',message=FALSE}
+train1<-train1[-1] #58 rows
+dim(train1)
+```
+
+Having completed out three-step preprocessing, we are left with 57 predictor columns (plus the outcome variable) in the training data, from an initial 159. Our new training contains about 75% of the observations of the original training set (14,718 observations)
+
+```{r summaryTrain1}
+dim(train1) #Dimensions of the final training set
+```
+
+## Picking the prediction model
+Now that our training data has been processed, we will test three prediction models.
+
+**Since this is a categorical outcome (five classes of the 'classe' outcome) we will use tree-based prediction, random forests, and a generalized boosting model using trees.**
+
+We will not use linear models or regression based models since we believe they would have less predictive value for multi-classification categorical outcomes such as this.
+
+First, we modeled the tree-classification using all 57 predictor variables, and this model had an accuracy of 47%, which is clearly insufficient.
+```{r mod1, echo=FALSE, results='hide',message=FALSE,cache=TRUE}
+##Trying rpart - 46.5% accuracy. (In sample error)
+set.seed(523)
+modFit<-train(classe~.,data=train1,method="rpart")
+confusionMatrix(train1$classe,predict(modFit,train1[-58]))
+```
+
+Second, we tried the **random forest prediction model (rf)**, once again using all 57 predictor variables. 
+As you will see below, the accuracy of this model was 100.0%, with no mis-classifications. This is an extrmely good result for a prediction model. The 95% confidence interval for the accuracy has a tight range (0.9997,1.0000) giving us a high degree of comfort in the model.
+
+```{r mod2, echo=FALSE, message=FALSE,cache=TRUE}
+set.seed(523)
+modFit2<-train(classe~.,data=train1,method="rf")
+confusionMatrix(train1$classe,predict(modFit2,train1[-58]))
+```
+
+
+Finally, we run the **Gradient Boosting Model using trees (gbm)**, to confirm that the random forest is indeed the superior prediction model.
+
+```{r mod3, echo=FALSE, message=FALSE,cache=TRUE}
+set.seed(523)
+modFit3<-train(classe~.,data=train1,method="gbm",verbose=FALSE)
+confusionMatrix(train1$classe,predict(modFit3,train1[-58]))
+```
+
+This model has an accuracy of 99.84%. While this provides high predictive value, the random forest model is more accurate, and hence **the conclusion from the training data is that the random forest is the model of choice**.
+
+## Cross Validation and Out-of-Sample Error
+
+Using the training data to build our model there is a possibility of over-fitting and therefore over-estimating accuracy of the models. 
+To confirm that the random forest model works well we will check the accuracy on the validation data we had created at the start.
+
+First, we need to format the validation data to only have the 57 predictor and 1 prediction variable, to allow us to make predictions from our previously created models. Since we used about 25% of the initial training data to create the validation data, we have 4,904 observations here.
+```{r validate, echo=FALSE, message=FALSE}
+##Getting validation data in same form as training data
+validation1<-select(validation,user_name,raw_timestamp_part_1,raw_timestamp_part_2,cvtd_timestamp,num_window,roll_belt,pitch_belt,yaw_belt,
+                    total_accel_belt,gyros_belt_x,gyros_belt_y,gyros_belt_z,accel_belt_x,accel_belt_y,accel_belt_z,magnet_belt_x,
+                    magnet_belt_y,magnet_belt_z,roll_arm,pitch_arm,yaw_arm,total_accel_arm,gyros_arm_x,gyros_arm_y,gyros_arm_z,accel_arm_x,
+                    accel_arm_y,accel_arm_z,magnet_arm_x,magnet_arm_y,magnet_arm_z,roll_dumbbell,pitch_dumbbell,yaw_dumbbell,total_accel_dumbbell,
+                    gyros_dumbbell_x,gyros_dumbbell_y,gyros_dumbbell_z,accel_dumbbell_x,accel_dumbbell_y,accel_dumbbell_z,magnet_dumbbell_x,
+                    magnet_dumbbell_y,magnet_dumbbell_z,roll_forearm,pitch_forearm,yaw_forearm,total_accel_forearm,gyros_forearm_x,gyros_forearm_y,
+                    gyros_forearm_z,accel_forearm_x,accel_forearm_y,accel_forearm_z,magnet_forearm_x,magnet_forearm_y,magnet_forearm_z,classe)
+```
+
+```{r Dimvalidate, message=FALSE}
+dim(validation1) #Dimensions of validation dataframe
+```
+
+**Calculation of Out of Sample Error for Random Forest Model**:
+```{r outofSample, echo=FALSE, message=FALSE}
+pred2<-predict(modFit2,validation1[-58]) ##RF out of sample error
+confusionMatrix(validation1$classe,pred2) #99.86% accuracy
+```
+
+As can be seen above, *the out of sample error is extremely low (0.04%)*, and the accuracy of the model on the validation data is 99.96%. The fact that the in-sample and out-of-sample error are both so low gives us high degree of comfort in the random forest model.
+Additionally, *the rate of true positives (sensitivity) and true negatives (specificity) is 100% for four of the five classes*, which is impressive for any predictive model. Even for the class without a 100% sensitivity and specificity, the value is close enough to 100% to give us comfort that there is not systemic misclassification.
+
+
+## Predictions on testing data
+Now that we have selected the random forest model with 57 predictors, we will make our best-guess estimate for the 'classe' variable for the 20 cases in the testing data. 
+
+To generate these predictions we simply run out prediction model and output the predictions.
+```{r testingPred}
+predTesting<-predict(modFit2,testing)
+predTesting
+```
+
+Based on a seperate quiz in the course, we can confirm 100% model accuracy for the 20 testing cases. 
+
+## Conclusion
+In fitness data it is important to look at how well a person performs certain activities, and being able to quantify and predict this can lead to much better health outcomes. **For the given data, taking into account run-times, in sample error, out of sample error, sensitivity, and specificity, we believe a random forest model provides the highest accuracy.**
